@@ -3,25 +3,14 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error
 from ta import add_all_ta_features
 import traceback
 
 st.set_page_config(page_title="Forecast BTC & GOOGL", layout="centered")
-st.title("📈 Previsão de Preços - BTC e GOOGL")
-st.markdown("Este app usa aprendizado de máquina para prever os **próximos 14 dias** de preços do Bitcoin e das ações do Google.")
+st.title("📈 Previsão Futura de Preços – BTC e GOOGL")
+st.markdown("Este app mostra a **previsão dos próximos 14 dias** com base em dados históricos e aprendizado de máquina. O modelo é treinado uma única vez ao iniciar.")
 
-# Mapear os arquivos dos ativos
-file_map = {
-    "BTC": "btc.csv",
-    "GOOGL": "googl.csv"
-}
-
-# Seletor de ativo
-asset = st.selectbox("Escolha o ativo:", list(file_map.keys()))
-
-# Função de carregamento
+# Função para carregar e preparar dados
 @st.cache_data
 def load_data(file_path):
     df = pd.read_csv(file_path)
@@ -33,55 +22,78 @@ def load_data(file_path):
     df = df.fillna(method='bfill').fillna(method='ffill')
     return df
 
-# Criar janelas para treino/teste
-def create_windowed_dataset(data, target_column='Close', window_size=30, horizon=14):
-    X, y = [], []
-    for i in range(len(data) - window_size - horizon):
-        X.append(data.iloc[i:i+window_size].values)
-        y.append(data[target_column].iloc[i+window_size:i+window_size+horizon].values)
-    return np.array(X), np.array(y)
-
-# Executar pipeline
-try:
-    # Carregar e exibir dados
-    df = load_data(file_map[asset])
-    df_display = df[['Date', 'Close', 'Volume']]
-    st.subheader("📊 Histórico de Preços")
-    st.line_chart(df_display.set_index("Date"))
-
-    # Preparar dados
+# Função para previsão de 14 dias futuros
+def forecast_next_14_days(df):
     df_model = df.drop(columns=['Date'])
-    X, y = create_windowed_dataset(df_model, window_size=30, horizon=14)
-    X_train, X_test, y_train, y_test = train_test_split(X.reshape(X.shape[0], -1), y, test_size=0.2, random_state=42)
+    window_size = 30
+    horizon = 14
 
-    # Treinar modelo
+    # Garantir que haja dados suficientes
+    if len(df_model) < (window_size + horizon):
+        return None, None
+
+    X = []
+    y = []
+
+    for i in range(len(df_model) - window_size - horizon):
+        X.append(df_model.iloc[i:i+window_size].values)
+        y.append(df_model['Close'].iloc[i+window_size:i+window_size+horizon].values)
+
+    X = np.array(X)
+    y = np.array(y)
+
+    X_train = X.reshape(X.shape[0], -1)
+    y_train = y
+
     model = RandomForestRegressor(n_estimators=100, max_depth=10, random_state=42)
     model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
 
-    st.subheader("📉 Erro de Treinamento (RMSE)")
-    st.metric(label=f"Erro RMSE - {asset}", value=f"{rmse:.2f}")
-
-    # 🔮 Previsão real para os próximos 14 dias
-    last_window = df_model.tail(30).values.reshape(1, -1)
+    # Criar janela mais recente para prever o futuro
+    last_window = df_model.tail(window_size).values.reshape(1, -1)
     future_pred = model.predict(last_window)[0]
     last_date = df['Date'].max()
     future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=14)
 
-    st.subheader("🔮 Previsão para os Próximos 14 Dias")
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(future_dates, future_pred, label="Previsão")
-    ax.set_title(f"Previsão de 14 dias futuros - {asset}")
-    ax.set_ylabel("Preço")
-    ax.set_xlabel("Data")
-    ax.legend()
-    st.pyplot(fig)
+    return future_dates, future_pred
 
-    # Mostrar últimos indicadores
-    st.subheader("📋 Últimos Indicadores Técnicos")
-    st.dataframe(df.tail(5).reset_index(drop=True))
+# Previsão para BTC
+try:
+    btc_df = load_data("BTC.csv")
+    st.subheader("🔮 BTC – Previsão para os próximos 14 dias")
+    btc_dates, btc_forecast = forecast_next_14_days(btc_df)
+
+    if btc_dates is not None:
+        fig1, ax1 = plt.subplots(figsize=(10, 4))
+        ax1.plot(btc_dates, btc_forecast, label="Previsão BTC")
+        ax1.set_title("Bitcoin – Previsão de Preço")
+        ax1.set_ylabel("Preço")
+        ax1.set_xlabel("Data")
+        ax1.legend()
+        st.pyplot(fig1)
+    else:
+        st.warning("⚠️ Dados insuficientes para prever BTC")
 
 except Exception as e:
-    st.error("❌ Erro ao rodar o app. Verifique se os arquivos CSV estão presentes e formatados corretamente.")
+    st.error("Erro ao prever BTC")
+    st.code(traceback.format_exc())
+
+# Previsão para GOOGL
+try:
+    googl_df = load_data("googl.csv")
+    st.subheader("🔮 GOOGL – Previsão para os próximos 14 dias")
+    googl_dates, googl_forecast = forecast_next_14_days(googl_df)
+
+    if googl_dates is not None:
+        fig2, ax2 = plt.subplots(figsize=(10, 4))
+        ax2.plot(googl_dates, googl_forecast, label="Previsão GOOGL", color="orange")
+        ax2.set_title("Google – Previsão de Preço")
+        ax2.set_ylabel("Preço")
+        ax2.set_xlabel("Data")
+        ax2.legend()
+        st.pyplot(fig2)
+    else:
+        st.warning("⚠️ Dados insuficientes para prever GOOGL")
+
+except Exception as e:
+    st.error("Erro ao prever GOOGL")
     st.code(traceback.format_exc())

@@ -21,8 +21,8 @@ def carregar_dados(caminho_csv, ativo):
     return df
 
 # 📊 Carregar dados
-btc_df = carregar_dados('BTC_full.csv', 'BTC')
-googl_df = carregar_dados('GOOGL_full.csv', 'GOOGL')
+btc_df = carregar_dados('BTC.csv', 'BTC')
+googl_df = carregar_dados('GOOGL.csv', 'GOOGL')
 
 # 📉 Visualizar dados históricos
 st.subheader("📊 Preços de Fechamento – 2024")

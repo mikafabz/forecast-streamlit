@@ -1,96 +1,94 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import RandomForestRegressor
 import matplotlib.pyplot as plt
-from datetime import timedelta
+from tensorflow.keras.models import load_model
+from sklearn.preprocessing import MinMaxScaler
+import os
 
-st.set_page_config(page_title="Previsão BTC e GOOGL", layout="wide")
+# 🧩 Configuração da página
+st.set_page_config(page_title="Previsão BTC e GOOGL", layout="centered")
 
-st.title("📈 Previsão para os próximos 14 dias")
-st.markdown("Este app usa um modelo Random Forest para prever os próximos 14 dias de fechamento do Bitcoin (BTC-USD) e ações da Google (GOOGL).")
+st.title("🔮 Previsão de Preços – BTC e GOOGL (14 dias)")
 
-# Função para previsão
-def forecast_next_14_days(df):
-    df = df[['Date', 'Close', 'Volume']].dropna()
-    df['Date'] = pd.to_datetime(df['Date'])
-    df = df.sort_values('Date')
-
-    # Usar janelas de 30 dias
-    WINDOW_SIZE = 30
-    X, y = [], []
-    for i in range(WINDOW_SIZE, len(df) - 14):
-        window = df.iloc[i - WINDOW_SIZE:i]
-        features = window[['Close', 'Volume']].values.flatten()
-        X.append(features)
-        y.append(df['Close'].iloc[i])
-
-    if len(X) == 0:
-        raise ValueError("Dados insuficientes para treinar modelo.")
-
-    model = RandomForestRegressor(n_estimators=100, random_state=42)
-    model.fit(X, y)
-
-    # Prever próximos 14 dias
-    last_window = df[['Close', 'Volume']].iloc[-WINDOW_SIZE:].values.flatten().reshape(1, -1)
-    forecasts = []
-    forecast_dates = []
-    base_date = df['Date'].iloc[-1]
-
-    for i in range(14):
-        pred = model.predict(last_window)[0]
-        forecasts.append(pred)
-        forecast_dates.append(base_date + timedelta(days=i + 1))
-
-        # Atualiza janela com novo dia previsto
-        new_row = np.array([pred, df['Volume'].iloc[-1]])
-        last_window = np.append(last_window[:, 2:], new_row).reshape(1, -1)
-
-    return forecasts, forecast_dates
-
-# Carregar arquivos
-def load_csv(path):
-    df = pd.read_csv(path)
-    if 'Date' not in df.columns or 'Close' not in df.columns or 'Volume' not in df.columns:
-        raise ValueError("O CSV deve conter as colunas: Date, Close, Volume.")
+# 📂 Função para carregar dados
+@st.cache_data
+def load_data(file_path):
+    df = pd.read_csv(file_path)
+    df = df[['Close']]
+    df = df.dropna()
     return df
 
-# BTC
-st.subheader("🔮 BTC – Previsão para os próximos 14 dias")
-try:
-    btc_df = load_csv("btc.csv")
-    st.write(f"📄 Total de linhas disponíveis no btc.csv: {len(btc_df)}")
-    btc_forecast, btc_dates = forecast_next_14_days(btc_df)
+# 📊 Função para preparar os dados para o modelo
+def prepare_data(df, n_steps=30):
+    scaler = MinMaxScaler()
+    df_scaled = scaler.fit_transform(df)
 
-    df_btc_forecast = pd.DataFrame({'Date': btc_dates, 'Forecast': btc_forecast})
-    st.line_chart(df_btc_forecast.set_index('Date'))
+    X, y = [], []
+    for i in range(n_steps, len(df_scaled) - 14):
+        X.append(df_scaled[i - n_steps:i])
+        y.append(df_scaled[i:i+14])  # Previsão dos 14 dias seguintes
 
-    st.download_button(
-        label="📥 Baixar previsão BTC (CSV)",
-        data=df_btc_forecast.to_csv(index=False).encode('utf-8'),
-        file_name='forecast_btc.csv',
-        mime='text/csv'
-    )
+    X = np.array(X)
+    y = np.array(y)
+    return X, y, scaler
 
-except Exception as e:
-    st.error(f"Erro com BTC: {e}")
+# 🔁 Função para prever os próximos 14 dias
+def predict_future(model, df, scaler, n_steps=30):
+    last_sequence = df[-n_steps:]
+    input_seq = scaler.transform(last_sequence)
+    input_seq = input_seq.reshape(1, n_steps, 1)
 
-# GOOGL
-st.subheader("🔮 GOOGL – Previsão para os próximos 14 dias")
-try:
-    googl_df = load_csv("googl.csv")
-    st.write(f"📄 Total de linhas disponíveis no googl.csv: {len(googl_df)}")
-    googl_forecast, googl_dates = forecast_next_14_days(googl_df)
+    future_pred_scaled = model.predict(input_seq)
+    future_pred = scaler.inverse_transform(future_pred_scaled[0])
+    return future_pred
 
-    df_googl_forecast = pd.DataFrame({'Date': googl_dates, 'Forecast': googl_forecast})
-    st.line_chart(df_googl_forecast.set_index('Date'))
+# 🧠 Carregar modelos
+@st.cache_resource
+def load_models():
+    model_btc = load_model("model_btc_lstm.h5")
+    model_googl = load_model("model_googl_lstm.h5")
+    return model_btc, model_googl
 
-    st.download_button(
-        label="📥 Baixar previsão GOOGL (CSV)",
-        data=df_googl_forecast.to_csv(index=False).encode('utf-8'),
-        file_name='forecast_googl.csv',
-        mime='text/csv'
-    )
+# 🚀 Executar previsão e mostrar resultados
+def run_forecast():
+    model_btc, model_googl = load_models()
 
-except Exception as e:
-    st.error(f"Erro com GOOGL: {e}")
+    # Carregar dados
+    df_btc = load_data("BTC.csv")
+    df_googl = load_data("GOOGL.csv")
+
+    # Preparar dados
+    _, _, scaler_btc = prepare_data(df_btc)
+    _, _, scaler_googl = prepare_data(df_googl)
+
+    # Prever próximos 14 dias
+    forecast_btc = predict_future(model_btc, df_btc, scaler_btc)
+    forecast_googl = predict_future(model_googl, df_googl, scaler_googl)
+
+    # Criar datas futuras
+    last_date = pd.to_datetime("2024-12-31")
+    future_dates = pd.date_range(last_date + pd.Timedelta(days=1), periods=14)
+
+    # 📈 Plotar gráfico
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(future_dates, forecast_btc, label="BTC")
+    ax.plot(future_dates, forecast_googl, label="GOOGL")
+    ax.set_title("Previsão para os próximos 14 dias")
+    ax.set_ylabel("Preço estimado (USD)")
+    ax.legend()
+    st.pyplot(fig)
+
+    # 🧾 Tabela
+    df_forecast = pd.DataFrame({
+        "Data": future_dates,
+        "BTC": forecast_btc,
+        "GOOGL": forecast_googl
+    })
+    st.dataframe(df_forecast.set_index("Data").style.format("${:.2f}"))
+
+# 📌 Rodar apenas uma vez
+if st.button("📊 Gerar Previsão"):
+    run_forecast()
+else:
+    st.info("Clique no botão acima para gerar a previsão para os próximos 14 dias.")

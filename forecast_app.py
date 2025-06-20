@@ -15,7 +15,7 @@ st.markdown("Este app usa aprendizado de máquina para prever os próximos 14 di
 
 # Dicionário de arquivos CSV
 file_map = {
-    "BTC": "BTC.csv",
+    "BTC": "btc.csv",
     "GOOGL": "googl.csv"
 }
 

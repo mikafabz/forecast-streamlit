@@ -1,87 +1,86 @@
+import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense
-import streamlit as st
-import datetime
-
-# Parâmetros
-WINDOW_SIZE = 60
-FORECAST_DAYS = 14
+import matplotlib.pyplot as plt
+import os
 
 # Função para carregar dados
 @st.cache_data
 def carregar_dados(caminho_arquivo, nome_ativo):
     df = pd.read_csv(caminho_arquivo)
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-    df = df[['Date', 'Close']].dropna()
+    df = df.dropna(subset=['Date'])
+    df = df[df['Date'].notnull()]
     df = df.sort_values('Date')
-    df['Close'] = pd.to_numeric(df['Close'], errors='coerce')
+    df['Ativo'] = nome_ativo
+    return df
+
+# Função para criar features
+def adicionar_features(df):
+    df = df.copy()
+    df['SMA_5'] = df['Close'].rolling(window=5).mean()
+    df['EMA_5'] = df['Close'].ewm(span=5, adjust=False).mean()
+    df['Retorno'] = df['Close'].pct_change()
     df = df.dropna()
     return df
 
-# Função de previsão
-def prever_ativos_lstm(df, ativo):
-    st.subheader(f"📈 Previsão para os próximos {FORECAST_DAYS} dias – {ativo}")
-    
-    if len(df) < WINDOW_SIZE + FORECAST_DAYS:
-        st.warning(f"⚠️ Dados insuficientes para gerar previsão de {ativo}.")
-        return
+# Função para treinar e prever
+def treinar_modelo(df):
+    df = adicionar_features(df)
+    df = df.dropna()
 
-    # Normalização
+    # Usar apenas os últimos 100 dados para treinar
+    df = df[-100:]
+
+    # Features e alvo
+    X = df[['SMA_5', 'EMA_5', 'Retorno']]
+    y = df['Close']
+
+    # Normalizar
     scaler = MinMaxScaler()
-    scaled_data = scaler.fit_transform(df[['Close']])
+    X_scaled = scaler.fit_transform(X)
 
-    # Preparar dados de treino
-    X, y = [], []
-    for i in range(WINDOW_SIZE, len(scaled_data) - FORECAST_DAYS):
-        X.append(scaled_data[i - WINDOW_SIZE:i])
-        y.append(scaled_data[i])
-    X, y = np.array(X), np.array(y)
+    # Modelo
+    model = RandomForestRegressor(n_estimators=100, random_state=42)
+    model.fit(X_scaled, y)
 
-    # Construir e treinar o modelo
-    model = Sequential([
-        LSTM(32, input_shape=(WINDOW_SIZE, 1)),
-        Dense(1)
-    ])
-    model.compile(optimizer='adam', loss='mse')
-    model.fit(X, y, epochs=5, batch_size=16, verbose=0)
+    # Previsão para os próximos 14 dias
+    ultimos = X_scaled[-1].reshape(1, -1)
+    previsoes = []
+    for _ in range(14):
+        pred = model.predict(ultimos)[0]
+        previsoes.append(pred)
+        nova_linha = np.array([[pred, pred, 0]])  # Simples aproximação para continuar
+        ultimos = np.roll(ultimos, -1, axis=0)
+        ultimos = nova_linha
 
-    # Previsão
-    forecast = []
-    input_seq = scaled_data[-WINDOW_SIZE:].reshape(1, WINDOW_SIZE, 1)
-    for _ in range(FORECAST_DAYS):
-        pred = model.predict(input_seq, verbose=0)[0][0]
-        forecast.append(pred)
-        input_seq = np.append(input_seq[:, 1:, :], [[[pred]]], axis=1)
-
-    # Reverter normalização
-    forecast_inv = scaler.inverse_transform(np.array(forecast).reshape(-1, 1)).flatten()
-    forecast_dates = pd.date_range(df['Date'].max() + pd.Timedelta(days=1), periods=FORECAST_DAYS)
-    forecast_df = pd.DataFrame({'Data': forecast_dates, 'Previsão': forecast_inv})
-
-    # Visualizar gráfico
-    st.line_chart(forecast_df.set_index('Data'))
+    return previsoes
 
 # Interface Streamlit
-st.title("🔮 Previsão de Ativos com LSTM")
-st.write("Este aplicativo realiza a previsão de preços para os próximos 14 dias com base em dados históricos.")
+st.set_page_config(page_title="Forecast App", layout="centered")
+st.title("📈 Previsão de Preços – BTC e GOOGL")
+
+# Seleção de ativo
+ativo = st.selectbox("Escolha o ativo:", ['BTC', 'GOOGL'])
 
 # Carregar dados
-btc_df = carregar_dados('BTC.csv', 'BTC')
-googl_df = carregar_dados('GOOGL.csv', 'GOOGL')
+btc = carregar_dados('BTC.csv', 'BTC')
+googl = carregar_dados('GOOGL.csv', 'GOOGL')
 
-# Visualizar série histórica
-st.subheader("📊 Preços históricos")
-fig, ax = plt.subplots(figsize=(10, 4))
-ax.plot(btc_df['Date'], btc_df['Close'], label='BTC')
-ax.plot(googl_df['Date'], googl_df['Close'], label='GOOGL')
-ax.set_title("Preço de Fechamento")
-ax.legend()
-st.pyplot(fig)
+# Selecionar ativo
+df = btc if ativo == 'BTC' else googl
 
-# Previsão
-prever_ativos_lstm(btc_df, "BTC")
-prever_ativos_lstm(googl_df, "GOOGL")
+# Exibir dados recentes
+st.subheader(f"📊 Últimos dados de {ativo}")
+st.dataframe(df.tail())
+
+# Rodar modelo e prever
+st.subheader(f"🔮 Previsão de {ativo} para os próximos 14 dias")
+previsoes = treinar_modelo(df)
+st.line_chart(previsoes)
+
+# Mostrar valores previstos
+st.write("Valores previstos:")
+st.write(previsoes)
